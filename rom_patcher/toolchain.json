@@ -1,0 +1,77 @@
+{
+  "repository": "https://github.com/3DSGuy/Project_CTR",
+  "platforms": {
+    "windows-x86_64": [
+      {
+        "name": "ctrtool",
+        "release": "ctrtool-v1.3.0",
+        "archive": "ctrtool-v1.3.0-win_x64.zip",
+        "archive_sha256": "8031dff3be72d0adb250fae1f969f27627e12a89ebc6dd074a15a75f87ddc949",
+        "member": "ctrtool.exe",
+        "sha256": "79021f283b2199950eb22cf3c459806b9c8aaaf68f65c80100107d3454a1c224"
+      },
+      {
+        "name": "makerom",
+        "release": "makerom-v0.19.0",
+        "archive": "makerom-v0.19.0-win_x86_64.zip",
+        "archive_sha256": "88df4455e60556374e202d507f54ee03fac7493ec9554ab853157524b6d69db0",
+        "member": "makerom.exe",
+        "sha256": "4cf0431e7c0a4fa82c85863e9f9411b120d9d7b208cb2b9a074a28ae02d3a787"
+      }
+    ],
+    "macos/arm64": [
+      {
+        "name": "ctrtool",
+        "release": "ctrtool-v1.3.0",
+        "archive": "ctrtool-v1.3.0-macos_arm64.zip",
+        "archive_sha256": "d141ebe7e6b0f7b30b09f1903bc40beb91d3ceb79b4398c180f86c6831ed431a",
+        "member": "ctrtool",
+        "sha256": "e4bae2eb1b254af5f4849d5807c92b3caff768fab5d5ead5f50ca0fe4ac7ff81"
+      },
+      {
+        "name": "makerom",
+        "release": "makerom-v0.19.0",
+        "archive": "makerom-v0.19.0-macos_arm64.zip",
+        "archive_sha256": "ea222647bf362d1aa0d8b7570dc65e7968ce6b3d7b103e9cc815a99698d930e0",
+        "member": "makerom",
+        "sha256": "8eadfece7788c0c73ca48e5c35cabed0e704de0b2220e342f075a42494a7e78d"
+      }
+    ],
+    "macos/x86_64": [
+      {
+        "name": "ctrtool",
+        "release": "ctrtool-v1.3.0",
+        "archive": "ctrtool-v1.3.0-macos_x86_64.zip",
+        "archive_sha256": "f6d6d4558b0f4660c3a0994c19d52b4ca19ef8cd847f52eb4ab6feb86070857f",
+        "member": "ctrtool",
+        "sha256": "cb79d940548dbc36f19713ee0146e35486a9293a90ecb125b3c2fe122ee80508"
+      },
+      {
+        "name": "makerom",
+        "release": "makerom-v0.19.0",
+        "archive": "makerom-v0.19.0-macos_x86_64.zip",
+        "archive_sha256": "a52563e5549cd2dd84e9b8d1cb0d1fdf15ea9bd0f6241e2e178fe4e4bf3a9277",
+        "member": "makerom",
+        "sha256": "24b3f1b84abec0f964be2f2b548e398a4341d0500f0ee396db2b4834c768ad8c"
+      }
+    ],
+    "linux-x86_64": [
+      {
+        "name": "ctrtool",
+        "release": "ctrtool-v1.3.0",
+        "archive": "ctrtool-v1.3.0-ubuntu_x86_64.zip",
+        "archive_sha256": "f553194b0ab2b539457160231cf5651c554e148f17ec960fae63424e82582aa8",
+        "member": "ctrtool",
+        "sha256": "69b699e7a9e18d3de2cd908cf85d695d4e72fdb8135b1f6d7efba0bf3aface4f"
+      },
+      {
+        "name": "makerom",
+        "release": "makerom-v0.19.0",
+        "archive": "makerom-v0.19.0-ubuntu_x86_64.zip",
+        "archive_sha256": "287b809dec064e0ad597e3d272c49ecb7eed41693d5ee6fef9d8a8aa24c2497e",
+        "member": "makerom",
+        "sha256": "871b7bbdcd066c4820268f1c14cbc463a86b74d56288b81eafa18977b9ea4486"
+      }
+    ]
+  }
+}

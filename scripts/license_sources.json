@@ -1,0 +1,76 @@
+[
+  {
+    "component": "Tcl",
+    "filename": "tcl90.txt",
+    "url": "https://raw.githubusercontent.com/tcltk/tcl/core-9-0-4/license.terms",
+    "sha256": "c0a69a2bfd757361ec7e6143973b103c90409316b49e9c88db26ad6388e79f16"
+  },
+  {
+    "component": "Tk",
+    "filename": "tk90.txt",
+    "url": "https://raw.githubusercontent.com/tcltk/tk/core-9-0-4/license.terms",
+    "sha256": "2cde822b93ca16ae535c954b7dfe658b4ad10df2a193628d1b358f1765e8b198"
+  },
+  {
+    "component": "OpenSSL",
+    "filename": "openssl.txt",
+    "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.5.8/LICENSE.txt",
+    "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+    "modules": [
+      "ssl"
+    ]
+  },
+  {
+    "component": "libffi",
+    "filename": "libffi.txt",
+    "url": "https://raw.githubusercontent.com/libffi/libffi/v3.4.6/LICENSE",
+    "sha256": "67894089811f93fca47a76f85e017da6f8582d4ba0905963c6e0f1ad6df7a195",
+    "modules": [
+      "ctypes"
+    ]
+  },
+  {
+    "component": "liblzma",
+    "filename": "liblzma.txt",
+    "url": "https://raw.githubusercontent.com/tukaani-project/xz/v5.8.1/COPYING.0BSD",
+    "sha256": "0b01625d853911cd0e2e088dcfb743261034a091bb379246cb25a14cc4c74bf1",
+    "modules": [
+      "lzma"
+    ]
+  },
+  {
+    "component": "bzip2",
+    "filename": "bzip2.txt",
+    "url": "https://raw.githubusercontent.com/libarchive/bzip2/bzip2-1.0.8/LICENSE",
+    "sha256": "c6dbbf828498be844a89eaa3b84adbab3199e342eb5cb2ed2f0d4ba7ec0f38a3",
+    "modules": [
+      "bz2"
+    ]
+  },
+  {
+    "component": "zlib",
+    "filename": "zlib.txt",
+    "url": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+    "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243"
+  },
+  {
+    "component": "GCC runtime libraries",
+    "filename": "gcc_gpl.txt",
+    "url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-12.2.0/COPYING3",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "binaries": [
+      "libgcc_s",
+      "libstdc++"
+    ]
+  },
+  {
+    "component": "GCC Runtime Library Exception",
+    "filename": "gcc_exception.txt",
+    "url": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-12.2.0/COPYING.RUNTIME",
+    "sha256": "9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74",
+    "binaries": [
+      "libgcc_s",
+      "libstdc++"
+    ]
+  }
+]
