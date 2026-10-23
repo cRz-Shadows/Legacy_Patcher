@@ -11,17 +11,10 @@ import struct
 import subprocess
 import sys
 import zlib
-from collections import defaultdict
 from pathlib import Path
 
-from .config import (
-    BPS_BLOCK,
-    BPS_EXTEND_CHUNK,
-    BPS_LITERAL_CHUNK,
-    BPS_MIN_COPY,
-    BPS_STRIDE,
-    IO_CHUNK,
-)
+from .config import BPS_LITERAL_CHUNK, IO_CHUNK
+from .delta import iter_source_runs
 from .files import crc32_file
 
 
@@ -129,60 +122,6 @@ class CRCWriter:
         self.crc = zlib.crc32(data, self.crc) & 0xFFFFFFFF
 
 
-def common_prefix_len(
-    source_view: memoryview,
-    target_view: memoryview,
-    si: int,
-    ti: int,
-    maxlen: int,
-) -> int:
-    lo, hi = 0, maxlen
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if source_view[si : si + mid] == target_view[ti : ti + mid]:
-            lo = mid
-        else:
-            hi = mid - 1
-    return lo
-
-
-def extend_match(
-    source_view: memoryview,
-    target_view: memoryview,
-    s_pos: int,
-    t_pos: int,
-    max_len: int,
-) -> int:
-    matched = 0
-    while matched + BPS_EXTEND_CHUNK <= max_len:
-        if (
-            source_view[s_pos + matched : s_pos + matched + BPS_EXTEND_CHUNK]
-            == target_view[t_pos + matched : t_pos + matched + BPS_EXTEND_CHUNK]
-        ):
-            matched += BPS_EXTEND_CHUNK
-        else:
-            break
-    rem = max_len - matched
-    if rem > 0:
-        matched += common_prefix_len(
-            source_view, target_view, s_pos + matched, t_pos + matched, rem
-        )
-    return matched
-
-
-def build_source_index(
-    source_view: memoryview, source_size: int
-) -> dict[int, list[int]]:
-    idx: dict[int, list[int]] = defaultdict(list)
-    last = source_size - BPS_BLOCK
-    if last < 0:
-        return idx
-    for pos in range(0, last + 1, BPS_STRIDE):
-        h = zlib.crc32(source_view[pos : pos + BPS_BLOCK]) & 0xFFFFFFFF
-        idx[h].append(pos)
-    return idx
-
-
 def create_bps_patch(
     source_file: Path, target_file: Path, out_bps: Path, relpath_for_meta: str
 ) -> None:
@@ -215,12 +154,13 @@ def create_bps_patch(
         ft = open(target_file, "rb")
         fo = open(tmp, "wb")
 
-        source_map = mmap.mmap(fs.fileno(), 0, access=mmap.ACCESS_READ)
-        target_map = mmap.mmap(ft.fileno(), 0, access=mmap.ACCESS_READ)
-        source_view = memoryview(source_map)
-        target_view = memoryview(target_map)
+        if source_size:
+            source_map = mmap.mmap(fs.fileno(), 0, access=mmap.ACCESS_READ)
+        if target_size:
+            target_map = mmap.mmap(ft.fileno(), 0, access=mmap.ACCESS_READ)
+        source_view = memoryview(source_map if source_size else b"")
+        target_view = memoryview(target_map if target_size else b"")
 
-        index = build_source_index(source_view, source_size)
         w = CRCWriter(fo)
 
         w.write(b"BPS1")
@@ -229,15 +169,18 @@ def create_bps_patch(
         w.write(bps_write_vli(len(metadata)))
         w.write(metadata)
 
-        out_off = 0
         source_rel = 0
 
         def write_source_read(n: int) -> None:
             w.write(bps_cmd(0, n))
 
-        def write_target_read(buf: bytes) -> None:
-            w.write(bps_cmd(1, len(buf)))
-            w.write(buf)
+        def write_target_read(start: int, end: int) -> None:
+            for chunk in range(start, end, BPS_LITERAL_CHUNK):
+                buf = bytes(
+                    target_view[chunk : min(end, chunk + BPS_LITERAL_CHUNK)]
+                )
+                w.write(bps_cmd(1, len(buf)))
+                w.write(buf)
 
         def write_source_copy(src_pos: int, n: int) -> None:
             nonlocal source_rel
@@ -246,50 +189,15 @@ def create_bps_patch(
             w.write(bps_write_signed(delta))
             source_rel = src_pos + n
 
-        while out_off < target_size:
-            remaining = target_size - out_off
-
-            if out_off < source_size:
-                test_len = min(BPS_BLOCK, remaining, source_size - out_off)
-                if (
-                    test_len > 0
-                    and source_view[out_off : out_off + test_len]
-                    == target_view[out_off : out_off + test_len]
-                ):
-                    max_len = min(remaining, source_size - out_off)
-                    run = extend_match(
-                        source_view, target_view, out_off, out_off, max_len
-                    )
-                    write_source_read(run)
-                    out_off += run
-                    continue
-
-            best_src = -1
-            best_len = 0
-            if remaining >= BPS_BLOCK and source_size >= BPS_BLOCK:
-                block = target_view[out_off : out_off + BPS_BLOCK]
-                h = zlib.crc32(block) & 0xFFFFFFFF
-                for s_pos in index.get(h, []):
-                    if source_view[s_pos : s_pos + BPS_BLOCK] != block:
-                        continue
-                    max_len = min(remaining, source_size - s_pos)
-                    mlen = extend_match(
-                        source_view, target_view, s_pos, out_off, max_len
-                    )
-                    if mlen > best_len:
-                        best_len = mlen
-                        best_src = s_pos
-                        if best_len >= 8 * BPS_BLOCK:
-                            break
-
-            if best_len >= BPS_MIN_COPY:
-                write_source_copy(best_src, best_len)
-                out_off += best_len
-                continue
-
-            lit_len = min(remaining, BPS_LITERAL_CHUNK)
-            write_target_read(bytes(target_view[out_off : out_off + lit_len]))
-            out_off += lit_len
+        written = 0
+        for t_pos, s_pos, length in iter_source_runs(source_view, target_view):
+            write_target_read(written, t_pos)
+            if s_pos == t_pos:
+                write_source_read(length)
+            else:
+                write_source_copy(s_pos, length)
+            written = t_pos + length
+        write_target_read(written, target_size)
 
         w.write(struct.pack("<I", source_crc))
         w.write(struct.pack("<I", target_crc))

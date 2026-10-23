@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import struct
 import zlib
+from typing import Iterator
 
-from .config import XOR_CHUNK
+from .config import (
+    DELTA_EXTEND_CHUNK,
+    DELTA_INDEX_MAX_ENTRIES,
+    DELTA_INDEX_MIN_BLOCK,
+    XOR_CHUNK,
+)
 from .progress import ConsoleProgress
 
 
@@ -44,87 +49,187 @@ def apply_xor_zlib(source: bytes, blob: bytes, expected_size: int) -> bytes:
     return bytes(out)
 
 
-def _common_prefix_bytes(
-    a: bytes, source_offset: int, b: bytes, target_offset: int, limit: int
+def _count_common_prefix(
+    source: memoryview,
+    target: memoryview,
+    s_pos: int,
+    t_pos: int,
+    max_len: int,
+) -> int:
+    lo, hi = 0, max_len
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if source[s_pos : s_pos + mid] == target[t_pos : t_pos + mid]:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
+def extend_match(
+    source: memoryview,
+    target: memoryview,
+    s_pos: int,
+    t_pos: int,
+    max_len: int,
 ) -> int:
     matched = 0
-    chunk = 1024 * 1024
-    while (
-        matched + chunk <= limit
-        and a[source_offset + matched : source_offset + matched + chunk]
-        == b[target_offset + matched : target_offset + matched + chunk]
-    ):
-        matched += chunk
-    while (
-        matched < limit
-        and a[source_offset + matched] == b[target_offset + matched]
-    ):
-        matched += 1
+    while matched + DELTA_EXTEND_CHUNK <= max_len:
+        if (
+            source[s_pos + matched : s_pos + matched + DELTA_EXTEND_CHUNK]
+            == target[t_pos + matched : t_pos + matched + DELTA_EXTEND_CHUNK]
+        ):
+            matched += DELTA_EXTEND_CHUNK
+        else:
+            break
+    rem = min(DELTA_EXTEND_CHUNK, max_len - matched)
+    if rem > 0:
+        matched += _count_common_prefix(
+            source, target, s_pos + matched, t_pos + matched, rem
+        )
     return matched
 
 
-def build_raw_delta(
-    source: bytes, target: bytes, block_size: int = 32 * 1024
-) -> bytes:
-    """
-    Source-referencing rolling delta for the uncommon size-changing member.
-    """
-    if block_size < 1024:
-        raise ValueError("raw delta block size is too small")
-    source_index: dict[int, list[tuple[bytes, int]]] = {}
-    if len(source) >= block_size:
-        for off in range(0, len(source) - block_size + 1, block_size):
-            block = source[off : off + block_size]
-            weak = zlib.adler32(block) & 0xFFFFFFFF
-            strong = hashlib.blake2b(block, digest_size=16).digest()
-            source_index.setdefault(weak, []).append((strong, off))
+def _choose_index_block_size(source_size: int) -> int:
+    """Use longer blocks for large sources to bound the index size."""
+    block = DELTA_INDEX_MIN_BLOCK
+    while source_size // block > DELTA_INDEX_MAX_ENTRIES:
+        block *= 2
+    return block
 
-    ops: list[tuple[int, int, bytes | int]] = []
-    p = 0
-    literal_start = 0
-    target_len = len(target)
-    progress = ConsoleProgress(max(1, target_len), "size-changing member delta")
 
-    while p + block_size <= target_len and source_index:
-        window = target[p : p + block_size]
-        weak = zlib.adler32(window) & 0xFFFFFFFF
-        match_off = None
-        candidates = source_index.get(weak)
-        if candidates:
-            strong = hashlib.blake2b(window, digest_size=16).digest()
-            for candidate_strong, off in candidates:
-                if (
-                    candidate_strong == strong
-                    and source[off : off + block_size] == window
-                ):
-                    match_off = off
-                    break
-        if match_off is None:
-            p += 1
-            progress.update(p)
+def _build_source_index(
+    source: memoryview, block: int
+) -> tuple[dict[int, int], dict[int, list[int]]]:
+    index: dict[int, int] = {}
+    collisions: dict[int, list[int]] = {}
+    for offset in range(0, len(source) - block + 1, block):
+        window = source[offset : offset + block]
+        checksum = zlib.crc32(window)
+        candidate = index.get(checksum)
+        if candidate is None:
+            index[checksum] = offset
             continue
+        candidates = collisions.get(checksum, (candidate,))
+        if all(
+            source[position : position + block] != window
+            for position in candidates
+        ):
+            collisions.setdefault(checksum, [candidate]).append(offset)
+    return index, collisions
 
-        if literal_start < p:
-            ops.append((1, 0, target[literal_start:p]))
-        max_len = min(len(source) - match_off, target_len - p)
-        length = block_size + _common_prefix_bytes(
-            source,
-            match_off + block_size,
-            target,
-            p + block_size,
-            max_len - block_size,
-        )
-        ops.append((0, match_off, length))
-        p += length
-        literal_start = p
-        progress.update(p)
 
-    if literal_start < target_len:
-        ops.append((1, 0, target[literal_start:]))
-    progress.update(target_len, force=True)
+def iter_source_runs(
+    source: bytes | memoryview, target: bytes | memoryview
+) -> Iterator[tuple[int, int, int]]:
+    """
+    Yield (target offset, source offset, length) for each run of target
+    bytes that the source can supply, in target order.
+
+    Equal bytes at the same offset are always copied. Moved runs use the
+    previous source offset or aligned index blocks, extended backwards into
+    pending literals. Short moved runs without an indexed block can remain
+    literal data.
+    """
+    source = memoryview(source)
+    target = memoryview(target)
+    block = _choose_index_block_size(len(source))
+    index = None
+    collisions: dict[int, list[int]] = {}
+    shift = 0
+    uncovered = 0
+
+    def build_run(s_pos: int, t_pos: int) -> tuple[int, int, int]:
+        max_len = min(len(target) - t_pos, len(source) - s_pos)
+        length = extend_match(source, target, s_pos, t_pos, max_len)
+        return (t_pos, s_pos, length)
+
+    def find_continuing_run(position: int) -> tuple[int, int, int] | None:
+        best = None
+        offsets = (position,) if shift == 0 else (position, position + shift)
+        for s_pos in offsets:
+            if 0 <= s_pos < len(source) and source[s_pos] == target[position]:
+                run = build_run(s_pos, position)
+                if best is None or run[2] > best[2]:
+                    best = run
+        return best
+
+    def find_indexed_run(start: int, stop: int) -> tuple[int, int, int] | None:
+        """Find a moved run without overlapping previously yielded data."""
+        nonlocal index, collisions
+        stop = min(stop, len(target) - block + 1)
+        if start >= stop:
+            return None
+        if index is None:
+            index, collisions = _build_source_index(source, block)
+        for position in range(start, stop):
+            window = target[position : position + block]
+            checksum = zlib.crc32(window)
+            candidate = index.get(checksum)
+            if candidate is None:
+                continue
+            s_pos = next(
+                (
+                    offset
+                    for offset in collisions.get(checksum, (candidate,))
+                    if source[offset : offset + block] == window
+                ),
+                None,
+            )
+            if s_pos is None:
+                continue
+            t_pos, s_pos, length = build_run(s_pos, position)
+            while (
+                t_pos > uncovered
+                and s_pos > 0
+                and source[s_pos - 1] == target[t_pos - 1]
+            ):
+                t_pos -= 1
+                s_pos -= 1
+                length += 1
+            return (t_pos, s_pos, length)
+        return None
+
+    position = 0
+    while position < len(target):
+        run = find_continuing_run(position)
+        if run is None:
+            run = find_indexed_run(position, position + 1)
+        elif run[2] < block:
+            # An index hit can recover moved data hidden by a chance match.
+            moved = find_indexed_run(position, position + block)
+            if moved is not None and moved[0] <= position:
+                run = moved
+        if run is None:
+            position += 1
+            continue
+        t_pos, s_pos, length = run
+        yield run
+        if s_pos != t_pos:
+            shift = s_pos - t_pos
+        position = uncovered = t_pos + length
+
+
+def build_raw_delta(source: bytes, target: bytes) -> bytes:
+    """Build a compressed RDP2 delta for a size-changing member."""
+    ops: list[tuple[int, int, bytes | int]] = []
+    written = 0
+    progress = ConsoleProgress(
+        max(1, len(target)), "size-changing member delta"
+    )
+    for t_pos, s_pos, length in iter_source_runs(source, target):
+        if written < t_pos:
+            ops.append((1, 0, target[written:t_pos]))
+        ops.append((0, s_pos, length))
+        written = t_pos + length
+        progress.update(written)
+    if written < len(target):
+        ops.append((1, 0, target[written:]))
+    progress.update(len(target), force=True)
 
     out = bytearray(b"RDP2")
-    out += struct.pack("<QQII", len(source), len(target), block_size, len(ops))
+    # The block-size field is kept for the format; apply_raw_delta ignores it.
+    out += struct.pack("<QQII", len(source), len(target), 0, len(ops))
     for kind, offset, value in ops:
         out.append(kind)
         if kind == 0:

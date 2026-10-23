@@ -21,8 +21,10 @@ from .config import (
     HASH_ALGO_COMPARE,
     IGNORE_CASE,
     REMOVE_FROM_ROOT,
+    XY_GAMES,
     GameIdentity,
 )
+from .encounter_repair import repair_encounter_locations
 from .files import build_base_manifest, build_index, files_differ, safe_rename
 from .garc import create_garc_patch, should_use_garc_patch
 from .identity import (
@@ -112,6 +114,8 @@ def prepare_updated_tree(
     )
     restore_base_identity(staged_updated, clean_base, rsf)
     apply_identity_to_temp_tree(staged_updated, clean_base, identity)
+    if identity.source_unique_id in XY_GAMES:
+        repair_encounter_locations(staged_updated, clean_base)
     print(f"Application Title ID: {identity.application_title_id:016X}")
     return PreparedGame(rsf, identity, base_exheader, source_exheader)
 
