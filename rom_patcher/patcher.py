@@ -39,6 +39,7 @@ from .patches import (
 from .rom_builder import capture_original_cci_card_info, run_makerom
 from .runtime import (
     bundle_dir,
+    cci_has_romfs,
     create_hidden_workdir,
     ensure_build_free_space,
     extract_code_probe,
@@ -235,9 +236,11 @@ class PatcherWindow(object):
                 self.set_stage(label, mode="indeterminate")
                 romfs_bin = extract_from_rom(ctrtool, rom_path, destination)
                 if not romfs_bin.is_file():
-                    raise RuntimeError(
-                        "Extraction failed because romfs.bin was not created."
-                    )
+                    if cci_has_romfs(rom_path):
+                        raise RuntimeError(
+                            "Extraction failed because romfs.bin was not created."
+                        )
+                    return
                 self.set_stage("Unpacking RomFS...", mode="indeterminate")
                 unpack_romfs_bin(ctrtool, romfs_bin, destination / "romfs")
                 try:

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import mmap
+import os
+import tempfile
+from contextlib import contextmanager, nullcontext, suppress
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +23,7 @@ from .config import (
     BASE_VALIDATION_IGNORE_RELPATHS,
     GARC_PATCH_EXT,
 )
-from .files import sha256_file
+from .files import sha256_file, validate_romfs_additions
 from .garc import read_garc_patch_manifest
 from .garc_apply import apply_garc_patch
 
@@ -63,10 +66,6 @@ def build_patch_plan(patchset_root, workdir=None):
         target_file = (
             Path(workdir) / Path(rel_target) if workdir is not None else None
         )
-        if target_file is not None and (not target_file.is_file()):
-            raise RuntimeError(
-                "Target file for patch not found: %s" % rel_target
-            )
         if kind == "bps":
             metadata = _read_bps_metadata_file(patch_path)
             item = {
@@ -89,7 +88,20 @@ def build_patch_plan(patchset_root, workdir=None):
                 "target_sha256": str(manifest["target_sha256"]),
                 "manifest": manifest,
             }
+        if item.get("adds_file"):
+            if item["source_size"] or item["source_crc"]:
+                raise RuntimeError(
+                    f"BPS addition has a nonempty source: {rel_target}"
+                )
+        elif target_file is not None and not target_file.is_file():
+            raise RuntimeError(
+                "Target file for patch not found: %s" % rel_target
+            )
         plan.append(item)
+    validate_romfs_additions(
+        Path(workdir) if workdir is not None else None,
+        (item["rel_target"] for item in plan if item.get("adds_file")),
+    )
     return plan
 
 
@@ -159,6 +171,8 @@ def prepare_base_validation(
             progress_cb(0, max(1, total))
         done_base = 0
         for item in patch_plan:
+            if item.get("adds_file"):
+                continue
             target_file = item["target_file"]
             rel = item["rel_target"]
             source_size = int(item["source_size"])
@@ -193,6 +207,8 @@ def prepare_base_validation(
         item["rel_target"].replace("\\", "/").casefold() for item in patch_plan
     }
     for item in patch_plan:
+        if item.get("adds_file"):
+            continue
         key = item["rel_target"].replace("\\", "/").casefold()
         if key not in expected:
             raise RuntimeError(
@@ -262,6 +278,23 @@ def prepare_base_validation(
     }
 
 
+@contextmanager
+def _stage_bps_addition(destination: Path):
+    """Publish the new file only after BPS verifies the staged result."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=destination.parent) as directory:
+        staged = Path(directory) / destination.name
+        staged.touch()
+        yield staged
+        destination.touch(exist_ok=False)
+        try:
+            os.replace(staged, destination)
+        except OSError:
+            with suppress(OSError):
+                destination.unlink(missing_ok=True)
+            raise
+
+
 def apply_patches_dir(
     patchset_root, workdir, progress_cb, validation_state=None
 ):
@@ -278,15 +311,22 @@ def apply_patches_dir(
     for item in patch_plan:
         target_size = int(item["target_size"])
         if item["kind"] == "bps":
+            destination = item["target_file"]
+            target = (
+                _stage_bps_addition(destination)
+                if item.get("adds_file")
+                else nullcontext(destination)
+            )
             with _open_patch_file(item["patch_path"]) as patch_file:
-                with mmap.mmap(
-                    patch_file.fileno(),
-                    0,
-                    access=mmap.ACCESS_READ,
-                ) as mapped_patch:
+                with (
+                    mmap.mmap(
+                        patch_file.fileno(), 0, access=mmap.ACCESS_READ
+                    ) as mapped_patch,
+                    target as target_file,
+                ):
                     apply_bps_patch_inplace(
                         mapped_patch,
-                        item["target_file"],
+                        target_file,
                         progress_cb,
                         completed,
                         max(1, total),

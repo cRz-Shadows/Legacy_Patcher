@@ -9,12 +9,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .config import EXHEADER_PROGRAM_ID_OFFSET, TITLE_ID_MIDDLE_LENGTH, XY_GAMES
+from .config import EXHEADER_PROGRAM_ID_OFFSET, TITLE_ID_MIDDLE_LENGTH
 from .identity import (
+    get_xy_game,
     parse_title_id,
     parse_title_id_middle,
     read_exheader,
-    title_unique_id,
 )
 from .licenses import show_licenses
 from .names import validate_game_name
@@ -46,14 +46,16 @@ def add_license_argument(parser: argparse.ArgumentParser) -> None:
 
 
 def extract_base(rom: Path, destination: Path) -> None:
-    from .runtime import extract_from_rom, unpack_romfs_bin
+    from .runtime import cci_has_romfs, extract_from_rom, unpack_romfs_bin
 
     tools = select_tools_dir(bundle_dir())
     ctrtool = resolve_tool(tools, "ctrtool")
     destination.mkdir(parents=True, exist_ok=True)
     image = extract_from_rom(ctrtool, rom, destination)
     if not image.is_file():
-        raise RuntimeError("ctrtool did not extract the base RomFS image.")
+        if cci_has_romfs(rom):
+            raise RuntimeError("ctrtool did not extract the base RomFS image.")
+        return
     unpack_romfs_bin(ctrtool, image, destination / "romfs")
     image.unlink()
 
@@ -62,7 +64,7 @@ def repair_game_text(folder: Path, base: Path, output_folder: Path) -> None:
     program_id = struct.unpack_from(
         "<Q", read_exheader(base), EXHEADER_PROGRAM_ID_OFFSET
     )[0]
-    if title_unique_id(program_id) not in XY_GAMES:
+    if not get_xy_game(program_id):
         return
     from .inputs import find_text_garc
 
@@ -73,10 +75,11 @@ def repair_game_text(folder: Path, base: Path, output_folder: Path) -> None:
         repair_file(source, output_folder / "reports" / "text_repair")
 
 
-def title_id_argument(value: str) -> int:
+def title_id_argument(value: str) -> int | str:
     try:
         if len(value.strip()) == TITLE_ID_MIDDLE_LENGTH:
-            return parse_title_id_middle(value)
+            parse_title_id_middle(value)
+            return value
         return parse_title_id(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError(str(error)) from error

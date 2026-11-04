@@ -28,10 +28,12 @@ from .config import (
     SMDH_TITLE_COUNT,
     SMDH_TITLE_ENTRY_SIZE,
     SMDH_TITLES_OFFSET,
+    TITLE_ID_APPLICATION,
+    TITLE_ID_EXTENDED_BITS,
+    TITLE_ID_KTR_BIT,
     TITLE_ID_MIDDLE_LENGTH,
-    TITLE_ID_PREFIX,
-    TITLE_ID_SUFFIX,
     TITLE_ID_UNIQUE_MASK,
+    TITLE_ID_VARIATION_MASK,
     XY_GAMES,
     GameIdentity,
 )
@@ -41,6 +43,12 @@ from .rsf import makerom_rsf_with_romfs_root
 
 def title_unique_id(title_id: int) -> int:
     return (int(title_id) >> 8) & 0xFFFFF
+
+
+def get_xy_game(title_id: int) -> str | None:
+    if title_id & ~TITLE_ID_UNIQUE_MASK == TITLE_ID_APPLICATION:
+        return XY_GAMES.get(title_unique_id(title_id))
+    return None
 
 
 def title_id_with_unique_id(title_id: int, unique_id: int) -> int:
@@ -65,15 +73,15 @@ def parse_title_id(value: str) -> int:
     if re.fullmatch(r"[0-9a-fA-F]{16}", digits) is None:
         raise ValueError("Use a 16-digit hexadecimal application title ID.")
     title_id = int(digits, 16)
-    if title_id & ~TITLE_ID_UNIQUE_MASK != 0x0004000000000000:
-        raise ValueError(
-            "Use an application title ID beginning with 000400000 "
-            "and ending with 00."
-        )
+    application_bits = TITLE_ID_UNIQUE_MASK | TITLE_ID_EXTENDED_BITS
+    if title_id & ~application_bits != TITLE_ID_APPLICATION:
+        raise ValueError("Use a 3DS application title ID.")
     return title_id
 
 
-def parse_title_id_middle(value: str) -> int:
+def parse_title_id_middle(
+    value: str, base_title_id: int = TITLE_ID_APPLICATION
+) -> int:
     """Expand the editable middle digits into a full application title ID."""
     digits = value.strip()
     if (
@@ -84,7 +92,8 @@ def parse_title_id_middle(value: str) -> int:
             f"Enter exactly {TITLE_ID_MIDDLE_LENGTH} hexadecimal digits "
             "using 0-9 or A-F."
         )
-    return parse_title_id(f"{TITLE_ID_PREFIX}{digits}{TITLE_ID_SUFFIX}")
+    title_id = title_id_with_unique_id(base_title_id, int(digits, 16))
+    return parse_title_id(f"{title_id:016X}")
 
 
 def read_exheader(root: Path) -> bytes:
@@ -100,6 +109,8 @@ def validate_requested_title_id(exheader: bytes, title_id: int) -> None:
     original_id = struct.unpack_from(
         "<Q", exheader, EXHEADER_PROGRAM_ID_OFFSET
     )[0]
+    if (original_id ^ title_id) & ~TITLE_ID_UNIQUE_MASK:
+        raise ValueError("Change only the five middle digits of the base ID.")
     if original_id == title_id:
         return
     descriptor_id = struct.unpack_from(
@@ -125,7 +136,7 @@ def detect_game_identity(
     target_id = program_id if title_id is None else title_id
     parse_title_id(f"{target_id:016X}")
     source_unique_id = title_unique_id(program_id)
-    game_name = XY_GAMES.get(source_unique_id, rsf.stem)
+    game_name = get_xy_game(program_id) or rsf.stem
     name = validate_game_name(display_name) if display_name is not None else ""
     patch_name = make_patchset_name(
         game_name,
@@ -139,8 +150,9 @@ def detect_game_identity(
         target_unique_id=title_unique_id(target_id),
         display_name=name,
         patchset_dir_name=patch_name,
+        title_id_flags=program_id & TITLE_ID_EXTENDED_BITS,
     )
-    if identity.changes_title_id:
+    if target_id != program_id:
         validate_requested_title_id(data, target_id)
     return identity
 
@@ -177,25 +189,42 @@ def restore_base_identity(root: Path, base: Path, rsf: Path) -> None:
             {current_id},
             f"0x{base_unique_id:08x}",
         )
-    jump = _rsf_scalar(text, "SystemControlInfo", "JumpId")
-    base_jump = struct.unpack_from("<Q", original, EXHEADER_JUMP_ID_OFFSET)[0]
-    if jump is not None and int(jump.rstrip("Ll"), 0) != base_jump:
-        text = _set_rsf_scalar(
-            text, "SystemControlInfo", "JumpId", f"0x{base_jump:016x}L"
-        )
+    if re.search(r"^SystemControlInfo\s*:", text, re.MULTILINE):
+        jump = _rsf_scalar(text, "SystemControlInfo", "JumpId")
+        base_jump = struct.unpack_from(
+            "<Q", original, EXHEADER_JUMP_ID_OFFSET
+        )[0]
+        if jump is not None and int(jump.rstrip("Ll"), 0) != base_jump:
+            text = _set_rsf_scalar(
+                text, "SystemControlInfo", "JumpId", f"0x{base_jump:016x}L"
+            )
     sd_application = bool(original[flag] & 0x02)
     text = _set_rsf_option(
         text, "UseOnSD", "true" if sd_application else "false"
     )
+    if original_id & TITLE_ID_EXTENDED_BITS:
+        ktr_option = "true" if original_id & TITLE_ID_KTR_BIT else "false"
+        text = _set_rsf_option(text, "UseKtrProgramId", ktr_option)
+        version = original_id & TITLE_ID_VARIATION_MASK
+        if version or _rsf_scalar(text, "TitleInfo", "Version") is not None:
+            text = _set_rsf_scalar(text, "TitleInfo", "Version", str(version))
     with rsf.open("w", encoding="utf-8", newline="") as output:
         output.write(text)
 
     crr = root / CRR_RELPATH
-    if crr.is_file() and (base / CRR_RELPATH).is_file():
+    base_crr = base / CRR_RELPATH
+    if crr.is_file() and base_crr.is_file():
         content = bytearray(crr.read_bytes())
         if len(content) < 0x360 or content[:4] != b"CRR0":
             raise ValueError("The updated static.crr is not a CRR0 file.")
-        struct.pack_into("<I", content, 0x340, base_unique_id << 8)
+        base_crr_id = base_unique_id << 8
+        if original_id & TITLE_ID_EXTENDED_BITS:
+            with base_crr.open("rb") as source:
+                header = source.read(0x360)
+            if len(header) != 0x360 or header[:4] != b"CRR0":
+                raise ValueError("The base static.crr is not a CRR0 file.")
+            base_crr_id = struct.unpack_from("<I", header, 0x340)[0]
+        struct.pack_into("<I", content, 0x340, base_crr_id)
         crr.write_bytes(content)
 
     icon = root / ICON_BIN_RELPATH
@@ -316,10 +345,13 @@ def apply_crr_identity(
             raise RuntimeError("%s static.crr is not a CRR0 file" % name)
         if struct.unpack_from("<I", content, 0x344)[0] != len(content):
             raise RuntimeError("%s static.crr has the wrong file size" % name)
-    vanilla_id = identity.source_unique_id << 8
-    target_id = identity.target_unique_id << 8
-    if struct.unpack_from("<I", clean_base, 0x340)[0] != vanilla_id:
+    vanilla_id = struct.unpack_from("<I", clean_base, 0x340)[0]
+    source_id = vanilla_id
+    if identity.title_id_flags:
+        source_id &= TITLE_ID_UNIQUE_MASK
+    if source_id != identity.source_unique_id << 8:
         raise RuntimeError("Clean static.crr belongs to a different game")
+    target_id = title_id_with_unique_id(vanilla_id, identity.target_unique_id)
     previous_id = struct.unpack_from("<I", data, 0x340)[0]
     if previous_id not in (vanilla_id, target_id):
         raise RuntimeError("Updated static.crr belongs to a different game")
@@ -361,9 +393,7 @@ def hardware_identity_manifest(
     return {
         "format": HARDWARE_IDENTITY_FORMAT,
         "game": identity.game_name,
-        "vanilla_title_id": (
-            "0x%016X" % (0x0004000000000000 | identity.source_unique_id << 8)
-        ),
+        "vanilla_title_id": "0x%016X" % identity.source_title_id,
         "application_title_id": "0x%016X" % identity.application_title_id,
         "jump_id": "0x%016X" % identity.application_title_id,
         "save_size": struct.unpack_from(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -343,6 +344,28 @@ def resolve_tool(tools_dir: Path, base_name: str) -> Path:
         "Missing required helper '%s'.\n\nExpected one of %s in:\n%s"
         % (base_name, expected, tools_dir)
     )
+
+
+def cci_has_romfs(rom: Path) -> bool:
+    """Distinguish a CCI without RomFS from a failed extraction."""
+    with rom.open("rb") as source:
+        ncsd = source.read(0x200)
+        if len(ncsd) != 0x200 or ncsd[0x100:0x104] != b"NCSD":
+            raise RuntimeError("Input ROM is not a valid CCI/3DS image")
+        block_size = 0x200 << ncsd[0x18E]
+        offset_blocks, size_blocks = struct.unpack_from("<II", ncsd, 0x120)
+        ncch_offset = offset_blocks * block_size
+        if (
+            ncch_offset < len(ncsd)
+            or not size_blocks
+            or ncch_offset + 0x200 > rom.stat().st_size
+        ):
+            raise RuntimeError("Input ROM is missing its main NCCH partition")
+        source.seek(ncch_offset)
+        ncch = source.read(0x200)
+    if len(ncch) != 0x200 or ncch[0x100:0x104] != b"NCCH":
+        raise RuntimeError("Input ROM has an invalid main NCCH header")
+    return bool(struct.unpack_from("<I", ncch, 0x1B4)[0])
 
 
 def extract_from_rom(ctrtool, rom, out_root):

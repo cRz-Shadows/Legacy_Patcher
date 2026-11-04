@@ -12,14 +12,21 @@ class GameIdentity:
     target_unique_id: int
     display_name: str
     patchset_dir_name: str
+    title_id_flags: int = 0
 
     @property
     def changes_title_id(self) -> bool:
         return self.source_unique_id != self.target_unique_id
 
     @property
+    def source_title_id(self) -> int:
+        base = TITLE_ID_APPLICATION | self.title_id_flags
+        return base | (self.source_unique_id << 8)
+
+    @property
     def application_title_id(self) -> int:
-        return 0x0004000000000000 | (self.target_unique_id << 8)
+        base = TITLE_ID_APPLICATION | self.title_id_flags
+        return base | (self.target_unique_id << 8)
 
 
 BASE_MANIFEST_NAME = "_base_manifest.json"
@@ -74,7 +81,26 @@ EXHEADER_ACTIVE_PERMISSIONS_OFFSET = 0x208
 
 REMOVE_FROM_ROOT = ("logo_x00.png", "ncch.bin")
 
+OS_METADATA_NAMES = {".ds_store", "desktop.ini", "thumbs.db"}
+
+OS_METADATA_PREFIX = "._"
+
+# These match ntpath.isreserved(), which needs Python 3.13 or newer.
+WINDOWS_DEVICE_NAMES = {
+    "AUX",
+    "CON",
+    "CONIN$",
+    "CONOUT$",
+    "NUL",
+    "PRN",
+    *(f"{port}{digit}" for port in ("COM", "LPT") for digit in "123456789¹²³"),
+}
+
 TITLE_ID_UNIQUE_MASK = 0x000000000FFFFF00
+TITLE_ID_APPLICATION = 0x0004000000000000
+TITLE_ID_KTR_BIT = 0x20000000
+TITLE_ID_VARIATION_MASK = 0xFF
+TITLE_ID_EXTENDED_BITS = TITLE_ID_KTR_BIT | TITLE_ID_VARIATION_MASK
 
 TITLE_ID_PREFIX = "000400000"
 

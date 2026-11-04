@@ -58,8 +58,11 @@ class TitleIdDialog(simpledialog.Dialog):
         super().__init__(parent, title="New title ID")
 
     def body(self, master):
+        base_id = f"{self.original_id:016X}"
+        prefix = base_id[: len(TITLE_ID_PREFIX)]
+        suffix = base_id[-len(TITLE_ID_SUFFIX) :]
         for text in (
-            f"Base title ID: {self.original_id:016X}",
+            f"Base title ID: {base_id}",
             f"Enter only the {TITLE_ID_MIDDLE_LENGTH} middle hexadecimal "
             "digits (0-9, A-F).",
         ):
@@ -68,12 +71,12 @@ class TitleIdDialog(simpledialog.Dialog):
             )
         field = ttk.Frame(master)
         field.pack(anchor="w", pady=(0, 12))
-        ttk.Label(field, text=f"{TITLE_ID_PREFIX}-").pack(side="left")
+        ttk.Label(field, text=f"{prefix}-").pack(side="left")
         self.entry = ttk.Entry(
             field, width=TITLE_ID_MIDDLE_LENGTH + 2, font="TkFixedFont"
         )
         self.entry.pack(side="left", padx=4)
-        ttk.Label(field, text=f"-{TITLE_ID_SUFFIX}").pack(side="left")
+        ttk.Label(field, text=f"-{suffix}").pack(side="left")
         for text in (format_title_id_examples(), TITLE_ID_WARNING):
             ttk.Label(master, text=text, justify="left", wraplength=480).pack(
                 anchor="w", pady=(0, 8)
@@ -126,7 +129,7 @@ def ask_for_value(
 def select_identity_options(
     base: Path,
     *,
-    title_id: int | None = None,
+    title_id: int | str | None = None,
     display_name: str | None = None,
     parent=None,
 ) -> IdentityOptions:
@@ -136,11 +139,13 @@ def select_identity_options(
     )[0]
 
     def validate_new_title_id(value: str) -> int:
-        requested_id = parse_title_id_middle(value)
+        requested_id = parse_title_id_middle(value, original_id)
         validate_requested_title_id(exheader, requested_id)
         return requested_id
 
-    if title_id is not None:
+    if isinstance(title_id, str):
+        title_id = validate_new_title_id(title_id)
+    elif title_id is not None:
         validate_requested_title_id(exheader, title_id)
     elif ask_to_change(
         "Title ID",

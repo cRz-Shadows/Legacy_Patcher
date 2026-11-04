@@ -62,10 +62,11 @@ def makerom_rsf_with_romfs_root(text: str, root_path: str = "romfs") -> str:
     return newline.join(lines) + newline
 
 
-def write_romfs_rsf(source, destination):
+def write_romfs_rsf(source, destination, *, include_romfs: bool = True):
     try:
         text = source.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
         raise RuntimeError("RSF must be UTF-8 text: %s" % source) from exc
+    root_path = "romfs" if include_romfs else '""'
     with destination.open("w", encoding="utf-8", newline="") as output:
-        output.write(makerom_rsf_with_romfs_root(text))
+        output.write(makerom_rsf_with_romfs_root(text, root_path))

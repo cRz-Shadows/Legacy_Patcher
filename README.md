@@ -27,9 +27,9 @@ Patch folders can have any name, with an optional `patches` wrapper. Outputs use
 
 Windows/Linux save patches beside the maker. macOS always asks you to choose the game folder, base ROM, and output folder. Rebuilding the same patch-set name replaces that set.
 
-- **Title ID:** identifies the game and selects its save data and emulator custom texture folders. A different ID keeps these separate from the base game. Enter only the five middle hexadecimal digits in `000400000-[five digits]-00`. The base game's permissions must allow the ID.
+- **Title ID:** identifies the game and selects its save data and emulator custom texture folders. A different ID keeps these separate from the base game. Enter only the five middle hexadecimal digits shown in the dialog. The base game's permissions must allow the ID.
 - **Game name:** changes the label shown on the 3DS HOME Menu and in emulator game lists, and becomes the output ROM filename. Use up to 63 characters; unsupported characters are rejected and Windows filename characters become underscores.
-- **Game files:** partial updated folders are supported; adding files absent from the base ROM is not supported.
+- **Game files:** partial updated folders can include new files under `romfs/`. The patch maker stores them as `.bps` patches in `romfs.7z`. New files cannot be empty.
 
 | Game | Enter | Full Title ID |
 | --- | --- | --- |

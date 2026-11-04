@@ -17,6 +17,8 @@ from .config import BPS_LITERAL_CHUNK, IO_CHUNK
 from .delta import iter_source_runs
 from .files import crc32_file
 
+ADD_FILE_METADATA = b"legacy_patcher:add_file=1\n"
+
 
 def apply_ips_to_file(ips_path: Path, target_path: Path) -> None:
     """Apply IPS records to a temporary copy before replacing the target."""
@@ -123,11 +125,16 @@ class CRCWriter:
 
 
 def create_bps_patch(
-    source_file: Path, target_file: Path, out_bps: Path, relpath_for_meta: str
+    source_file: Path,
+    target_file: Path,
+    out_bps: Path,
+    relpath_for_meta: str,
+    *,
+    adds_file: bool = False,
 ) -> None:
     """
     Create BPS patch transforming source_file -> target_file, writing to
-    out_bps. Metadata contains just relpath (no manifest file).
+    out_bps. Use an empty source and adds_file when adding a file.
     """
     source_size = source_file.stat().st_size
     target_size = target_file.stat().st_size
@@ -136,6 +143,8 @@ def create_bps_patch(
     target_crc = crc32_file(target_file)
 
     metadata = f"relpath={relpath_for_meta}\n".encode("utf-8")
+    if adds_file:
+        metadata = ADD_FILE_METADATA + metadata
 
     tmp = out_bps.with_suffix(out_bps.suffix + f".tmp.{os.getpid()}")
     try:
@@ -190,7 +199,10 @@ def create_bps_patch(
             source_rel = src_pos + n
 
         written = 0
-        for t_pos, s_pos, length in iter_source_runs(source_view, target_view):
+        source_runs = (
+            iter_source_runs(source_view, target_view) if source_size else ()
+        )
+        for t_pos, s_pos, length in source_runs:
             write_target_read(written, t_pos)
             if s_pos == t_pos:
                 write_source_read(length)
@@ -345,7 +357,12 @@ def _read_bps_metadata_file(patch_path: Path) -> dict:
         cur = [4]
         source_size = bps_read_vli_mem(header, cur)
         target_size = bps_read_vli_mem(header, cur)
-        bps_read_vli_mem(header, cur)
+        metadata_size = bps_read_vli_mem(header, cur)
+        marker_size = len(ADD_FILE_METADATA)
+        adds_file = False
+        if marker_size <= metadata_size <= patch_size - 12 - cur[0]:
+            patch_file.seek(cur[0])
+            adds_file = patch_file.read(marker_size) == ADD_FILE_METADATA
         patch_file.seek(-12, os.SEEK_END)
         footer = patch_file.read(12)
         if len(footer) != 12:
@@ -358,6 +375,7 @@ def _read_bps_metadata_file(patch_path: Path) -> dict:
         "target_crc": target_crc,
         "patch_crc": patch_crc,
         "patch_size": patch_size,
+        "adds_file": adds_file,
     }
 
 

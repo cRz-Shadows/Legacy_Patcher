@@ -80,13 +80,11 @@ def run_makerom(
     icon = workdir / "exefs" / "icon.bin"
     banner = workdir / "exefs" / "banner.bin"
     romfs_dir = workdir / "romfs"
-    for required_file in (exheader, code, icon, banner, rsf):
+    for required_file in (exheader, code, rsf):
         if not required_file.is_file():
             raise RuntimeError(
                 "Missing required build input: %s" % required_file
             )
-    if not romfs_dir.is_dir():
-        raise RuntimeError("Missing required build input: %s" % romfs_dir)
     out_rom = Path(out_rom)
     if out_rom.exists():
         raise RuntimeError(
@@ -95,18 +93,22 @@ def run_makerom(
     out_rom.parent.mkdir(parents=True, exist_ok=True)
     build_rsf = workdir / "_makerom_build.rsf"
     deterministic_romfs = workdir / "_deterministic_romfs.bin"
-    write_romfs_rsf(rsf, build_rsf)
+    has_romfs = romfs_dir.is_dir()
+    write_romfs_rsf(rsf, build_rsf, include_romfs=has_romfs)
     deferred_validation = (
         validation_state.get("deferred_romfs", {})
         if validation_state is not None
         else {}
     )
-    build_deterministic_romfs(
-        romfs_dir,
-        deterministic_romfs,
-        deferred_validation=deferred_validation,
-        validation_progress_cb=validation_progress_cb,
-    )
+    if deferred_validation and not has_romfs:
+        raise RuntimeError("Missing required build input: %s" % romfs_dir)
+    if has_romfs:
+        build_deterministic_romfs(
+            romfs_dir,
+            deterministic_romfs,
+            deferred_validation=deferred_validation,
+            validation_progress_cb=validation_progress_cb,
+        )
     staging_dir = create_hidden_output_staging_dir(out_rom.parent)
     staged_output = staging_dir / "_verified_makerom_output.3ds"
     command = [
@@ -120,25 +122,23 @@ def run_makerom(
         "p",
         "-ignoresign",
         "-devcci",
-        "-romfs",
-        str(deterministic_romfs),
         "-rsf",
         str(build_rsf),
         "-exheader",
         str(exheader),
         "-code",
         str(code),
-        "-icon",
-        str(icon),
-        "-banner",
-        str(banner),
     ]
-    logo = workdir / "logo.bin"
-    plain = workdir / "plain.bin"
-    if logo.is_file():
-        command.extend(("-logo", str(logo)))
-    if plain.is_file():
-        command.extend(("-plainrgn", str(plain)))
+    if has_romfs:
+        command.extend(("-romfs", str(deterministic_romfs)))
+    for option, path in (
+        ("-icon", icon),
+        ("-banner", banner),
+        ("-logo", workdir / "logo.bin"),
+        ("-plainrgn", workdir / "plain.bin"),
+    ):
+        if path.is_file():
+            command.extend((option, str(path)))
     try:
         run_cmd(command, cwd=workdir)
         try:

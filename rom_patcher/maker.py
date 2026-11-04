@@ -21,15 +21,22 @@ from .config import (
     HASH_ALGO_COMPARE,
     IGNORE_CASE,
     REMOVE_FROM_ROOT,
-    XY_GAMES,
     GameIdentity,
 )
 from .encounter_repair import repair_encounter_locations
-from .files import build_base_manifest, build_index, files_differ, safe_rename
+from .files import (
+    build_base_manifest,
+    build_index,
+    files_differ,
+    is_os_metadata,
+    safe_rename,
+    validate_romfs_additions,
+)
 from .garc import create_garc_patch, should_use_garc_patch
 from .identity import (
     apply_identity_to_temp_tree,
     detect_game_identity,
+    get_xy_game,
     hardware_identity_manifest,
     read_exheader,
     restore_base_identity,
@@ -114,7 +121,7 @@ def prepare_updated_tree(
     )
     restore_base_identity(staged_updated, clean_base, rsf)
     apply_identity_to_temp_tree(staged_updated, clean_base, identity)
-    if identity.source_unique_id in XY_GAMES:
+    if get_xy_game(identity.source_title_id):
         repair_encounter_locations(staged_updated, clean_base)
     print(f"Application Title ID: {identity.application_title_id:016X}")
     return PreparedGame(rsf, identity, base_exheader, source_exheader)
@@ -183,7 +190,7 @@ def create_patchset(
             rsf_path.relative_to(staged_updated).as_posix().lower(),
         }
 
-        diffs: list[tuple[str, Path, Path]] = []
+        diffs: list[tuple[str, Path | None, Path]] = []
 
         for key, updated_path in updated_index.items():
             rel = updated_path.relative_to(staged_updated).as_posix()
@@ -195,17 +202,24 @@ def create_patchset(
             if relative_lower == CODE_IPS_RELPATH.lower():
                 continue
 
-            if key not in base_index:
-
-                raise SystemExit(
-                    "ERROR: Updated folder contains a file not present in"
-                    f" base:\n  {rel}\nAdded files are not supported by this"
-                    " patch-set format."
-                )
-
-            base_path = base_index[key]
-            if files_differ(updated_path, base_path, HASH_ALGO_COMPARE):
+            base_path = base_index.get(key)
+            if base_path is None:
+                if is_os_metadata(updated_path):
+                    print("Skipping OS metadata file:", rel)
+                    continue
+                # ctrtool cannot extract empty RomFS files, so a ROM that adds
+                # one could not be the base ROM for a later patch set.
+                if not updated_path.stat().st_size:
+                    raise SystemExit(f"New files cannot be empty: {rel}")
+            if base_path is None or files_differ(
+                updated_path, base_path, HASH_ALGO_COMPARE
+            ):
                 diffs.append((rel, base_path, updated_path))
+
+        validate_romfs_additions(
+            clean_base,
+            (rel for rel, base_path, _ in diffs if base_path is None),
+        )
 
         if not diffs:
             print("No differing files found. Nothing to do.")
@@ -214,12 +228,15 @@ def create_patchset(
         staged_patches = Path(tempfile.mkdtemp(prefix="game_patches_"))
         (staged_patches / "exefs").mkdir()
         (staged_patches / "romfs").mkdir()
+        empty_source = source_workspace / "empty_source"
         patch_count = 0
         garc_count = 0
         bps_count = 0
 
         for rel, base_file, updated_file in diffs:
-            use_garc = should_use_garc_patch(base_file, updated_file)
+            use_garc = base_file is not None and should_use_garc_patch(
+                base_file, updated_file
+            )
             if use_garc:
                 out_patch = staged_patches / (rel + GARC_PATCH_EXT)
                 out_patch.parent.mkdir(parents=True, exist_ok=True)
@@ -252,12 +269,23 @@ def create_patchset(
                 )
                 garc_count += 1
             else:
-                if base_file.stat().st_size > GARC_PATCH_MIN_SOURCE_SIZE:
+                if (
+                    base_file is not None
+                    and base_file.stat().st_size > GARC_PATCH_MIN_SOURCE_SIZE
+                ):
                     print("Large non-GARC file, using BPS:", rel)
                 out_bps = staged_patches / (rel + ".bps")
                 out_bps.parent.mkdir(parents=True, exist_ok=True)
                 print("BPS:", rel)
-                create_bps_patch(base_file, updated_file, out_bps, rel)
+                if base_file is None:
+                    empty_source.touch()
+                create_bps_patch(
+                    base_file or empty_source,
+                    updated_file,
+                    out_bps,
+                    rel,
+                    adds_file=base_file is None,
+                )
                 bps_count += 1
             patch_count += 1
 

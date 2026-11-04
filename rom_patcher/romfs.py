@@ -342,8 +342,6 @@ def build_deterministic_romfs(
     """
     root_path = Path(root_path)
     root = _romfs_collect_directory(root_path)
-    if not root["files"] and (not root["dirs"]):
-        raise RuntimeError("RomFS contains no files")
     dir_hash, dir_table, file_hash, file_table, data_order, data_size = (
         _romfs_build_metadata(root)
     )
