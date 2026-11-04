@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import sysconfig
 import venv
 import zipfile
 from pathlib import Path
@@ -14,13 +15,38 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from rom_patcher.toolchain import PlatformTools, get_platform_tools
+from rom_patcher.toolchain import (
+    MACOS_ARCHITECTURES,
+    PlatformTools,
+    get_platform_tools,
+)
 from scripts.build_native import build_native
 from scripts.paths import BUILD_ROOT, PROJECT_ROOT, SCRIPTS_ROOT
+
+SINGLE_ARCHITECTURE_PACKAGES = (
+    "from importlib.metadata import distributions\n"
+    "for package in distributions():\n"
+    "    tags = (package.read_text('WHEEL') or '').split()\n"
+    "    if any(tag.endswith(('_arm64', '_x86_64')) for tag in tags):\n"
+    "        print(f'{package.name}=={package.version}')\n"
+)
 
 
 def run(command: list[str]) -> None:
     subprocess.run(command, cwd=PROJECT_ROOT, check=True)
+
+
+def interpreter_platform(python: Path) -> str:
+    result = subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import sysconfig; print(sysconfig.get_platform())",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def environment_python() -> Path:
@@ -28,9 +54,12 @@ def environment_python() -> Path:
     python = environment / (
         "Scripts/python.exe" if os.name == "nt" else "bin/python"
     )
-    if not python.is_file():
+    if (
+        not python.is_file()
+        or interpreter_platform(python) != sysconfig.get_platform()
+    ):
         print("Creating the build environment...", flush=True)
-        venv.EnvBuilder(with_pip=True).create(environment)
+        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
     return python
 
 
@@ -45,6 +74,41 @@ def install_requirements(python: Path) -> None:
             "--disable-pip-version-check",
             "--requirement",
             str(PROJECT_ROOT / "requirements.txt"),
+        ]
+    )
+
+
+def build_universal2_packages(python: Path) -> None:
+    """
+    Rebuild single-architecture packages from source as universal2.
+
+    pip prefers single-architecture wheels, and some packages publish no
+    universal2 wheel, so PyInstaller would otherwise reject them.
+    """
+    packages = subprocess.run(
+        [str(python), "-c", SINGLE_ARCHITECTURE_PACKAGES],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    if not packages:
+        return
+    print(f"Building universal2 packages: {', '.join(packages)}", flush=True)
+    names = ",".join(package.partition("==")[0] for package in packages)
+    os.environ["ARCHFLAGS"] = " ".join(
+        f"-arch {architecture}" for architecture in MACOS_ARCHITECTURES
+    )
+    run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--force-reinstall",
+            "--no-deps",
+            f"--no-binary={names}",
+            *packages,
         ]
     )
 
@@ -107,6 +171,9 @@ def main() -> int:
     arguments = parser.parse_args()
     if sys.version_info < (3, 10) or sys.maxsize <= 2**32:
         parser.error("Use a 64-bit Python 3.10 or newer")
+    universal2 = sysconfig.get_platform().endswith("universal2")
+    if sys.platform == "darwin" and not universal2:
+        parser.error("On macOS, use the python.org Python shown in README.md")
     try:
         temporary = BUILD_ROOT / "tmp"
         temporary.mkdir(parents=True, exist_ok=True)
@@ -115,6 +182,8 @@ def main() -> int:
         target = get_platform_tools()
         python = environment_python()
         install_requirements(python)
+        if sys.platform == "darwin":
+            build_universal2_packages(python)
         check_python(python)
         run(
             [

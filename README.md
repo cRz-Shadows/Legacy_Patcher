@@ -74,18 +74,19 @@ WSL produces Linux programs. File pickers require
 
 ### macOS, Intel or Apple silicon
 
-Install [Homebrew](https://brew.sh/) first, then run:
+Run:
 
 ```sh
 xcode-select --install
-brew install python@3.12 python-tk@3.12
-"$(brew --prefix python@3.12)/bin/python3.12" scripts/build.py
+curl -fLO https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg
+sudo installer -pkg python-3.12.10-macos11.pkg -target /
+/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 scripts/build.py
 ```
 
-Skip `xcode-select --install` if the compiler tools are already installed.
+Skip `xcode-select --install` if the compiler tools are already installed, and skip the two install commands if Python 3.12 from python.org is already installed. The build needs the python.org Python because it makes universal2 programs that run natively on Intel and Apple silicon; Homebrew's Python cannot.
 
 ### Build output
 
 The script handles the Python environment, dependencies, tool downloads, compilation of `scripts/native/legacy_lz11.c`, and both executables. All platforms use **CTRTool 1.3.0** and **MakeROM 0.19.0**.
 
-Your compiled programs appear in `dist/<system>`.
+Your compiled programs appear in `dist/<system>`, such as `dist/macos`.

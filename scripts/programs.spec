@@ -26,13 +26,15 @@ data += [
 ]
 binaries += [
     (
-        str(TOOLS_ROOT / target.folder / target.native_library),
-        f"tools/{target.folder}",
+        str(TOOLS_ROOT / target.release_label / target.native_library),
+        f"tools/{target.release_label}",
     )
 ]
 excludes = ["numpy"]
+target_arch = None
 if sys.platform == "darwin":
     excludes.append("psutil")
+    target_arch = "universal2"
 
 programs = [
     (target.patcher, "legacy_patcher"),
@@ -59,6 +61,7 @@ for (source, name), analysis in zip(programs, analyses):
         analysis.datas + license_data,
         name=name,
         upx=False,
+        target_arch=target_arch,
         console=(
             source == "make_patches.py" or sys.platform.startswith("linux")
         ),

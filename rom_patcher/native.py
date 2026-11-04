@@ -30,7 +30,7 @@ def _native_lz11_candidates() -> list[Path]:
         return []
     roots = list(dict.fromkeys((bundle_dir(), app_dir())))
     return [
-        tools_root(root) / target.folder / target.native_library
+        tools_root(root) / target.release_label / target.native_library
         for root in roots
     ]
 

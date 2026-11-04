@@ -1,9 +1,9 @@
 #!/usr/bin/env sh
 set -eu
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-python_command=python3
-if command -v python3.12 >/dev/null 2>&1; then
-    python_command=python3.12
+python_command=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+if [ ! -x "$python_command" ]; then
+    python_command=python3
 fi
 if "$python_command" "$script_directory/build.py" "$@"; then
     exit 0

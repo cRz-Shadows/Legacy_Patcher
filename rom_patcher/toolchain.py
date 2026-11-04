@@ -12,21 +12,19 @@ from .config import TOOLS_DIR
 
 BUILD_DIRECTORY = "build"
 
+MACOS_ARCHITECTURES = ("arm64", "x86_64")
+
 
 @dataclass(frozen=True)
 class PlatformTools:
     folder: str
-    architecture: str
     native_library: str
     patcher: str = "patcher.py"
 
     @property
-    def resource_group(self) -> str:
-        return self.folder.split("/")[0]
-
-    @property
     def release_label(self) -> str:
-        return self.folder.replace("/", "-")
+        """Name the folder shared by every architecture of one system."""
+        return self.folder.split("/")[0]
 
 
 def get_platform_tools(
@@ -40,25 +38,13 @@ def get_platform_tools(
         "aarch64": "arm64",
     }.get(machine, machine)
 
-    if system == "darwin" and architecture in {"arm64", "x86_64"}:
-        return PlatformTools(
-            f"macos/{architecture}",
-            architecture,
-            "liblegacy_lz11.dylib",
-        )
+    if system == "darwin" and architecture in MACOS_ARCHITECTURES:
+        return PlatformTools(f"macos/{architecture}", "liblegacy_lz11.dylib")
     if architecture == "x86_64":
         if system == "win32":
-            return PlatformTools(
-                "windows-x86_64",
-                architecture,
-                "legacy_lz11.dll",
-            )
+            return PlatformTools("windows-x86_64", "legacy_lz11.dll")
         if system.startswith("linux"):
-            return PlatformTools(
-                "linux-x86_64",
-                architecture,
-                "liblegacy_lz11.so",
-            )
+            return PlatformTools("linux-x86_64", "liblegacy_lz11.so")
     raise RuntimeError(
         "Builds support Windows and Linux x86_64, and macOS arm64 or x86_64."
     )

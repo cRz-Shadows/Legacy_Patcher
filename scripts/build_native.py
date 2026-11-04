@@ -15,7 +15,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rom_patcher.native import load_native_library
-from rom_patcher.toolchain import PlatformTools, get_platform_tools
+from rom_patcher.toolchain import (
+    MACOS_ARCHITECTURES,
+    PlatformTools,
+    get_platform_tools,
+)
 from scripts.paths import SCRIPTS_ROOT, TOOLS_ROOT
 
 SOURCE = SCRIPTS_ROOT / "native" / "legacy_lz11.c"
@@ -115,9 +119,7 @@ def find_compiler() -> Compiler:
     )
 
 
-def compile_command(
-    compiler: Compiler, output: Path, target: PlatformTools
-) -> list[str]:
+def compile_command(compiler: Compiler, output: Path) -> list[str]:
     if compiler.is_msvc:
         return [
             compiler.executable,
@@ -135,7 +137,8 @@ def compile_command(
         command.append("-fPIC")
     command.append("-dynamiclib" if sys.platform == "darwin" else "-shared")
     if sys.platform == "darwin":
-        command.extend(("-arch", target.architecture))
+        for architecture in MACOS_ARCHITECTURES:
+            command.extend(("-arch", architecture))
     command.extend(("-o", str(output), str(SOURCE)))
     return command
 
@@ -144,7 +147,7 @@ def build_native(targets: list[PlatformTools]) -> None:
     compiler = find_compiler()
     current = get_platform_tools()
     for target in targets:
-        folder = TOOLS_ROOT / target.folder
+        folder = TOOLS_ROOT / target.release_label
         folder.mkdir(parents=True, exist_ok=True)
         output = folder / target.native_library
         print(f"Compiling LZ11 for {target.release_label}...", flush=True)
@@ -153,7 +156,7 @@ def build_native(targets: list[PlatformTools]) -> None:
             working = Path(temporary)
             staged = working / target.native_library
             subprocess.run(
-                compile_command(compiler, staged, target),
+                compile_command(compiler, staged),
                 cwd=working,
                 env=compiler.environment,
                 check=True,
