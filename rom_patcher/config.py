@@ -160,6 +160,8 @@ PATCHES_ROOT_DIR = "patches"
 
 PATCH_ARCHIVE_NAMES = ("exefs.7z", "romfs.7z")
 
+PATCHSET_ZIP_EXT = ".zip"
+
 BASE_VALIDATION_IGNORE_RELPATHS = {"romfs.bin"}
 
 GARC_PATCH_WORKERS = 0

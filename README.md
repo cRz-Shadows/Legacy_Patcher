@@ -61,16 +61,13 @@ Reopen your terminal, then build:
 python scripts/build.py
 ```
 
-### Ubuntu, x86_64, including WSL 2
+### Ubuntu, x86_64
 
 ```sh
 sudo apt update
 sudo apt install python3 python3-tk python3-venv build-essential
 python3 scripts/build.py
 ```
-
-WSL produces Linux programs. File pickers require
-[WSLg](https://learn.microsoft.com/en-us/windows/wsl/tutorials/gui-apps).
 
 ### macOS, Intel or Apple silicon
 
@@ -83,7 +80,7 @@ sudo installer -pkg python-3.12.10-macos11.pkg -target /
 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 scripts/build.py
 ```
 
-Skip `xcode-select --install` if the compiler tools are already installed, and skip the two install commands if Python 3.12 from python.org is already installed. The build needs the python.org Python because it makes universal2 programs that run natively on Intel and Apple silicon; Homebrew's Python cannot.
+The build needs the python.org Python because it makes universal2 programs that run natively on Intel and Apple silicon. Homebrew's Python cannot.
 
 ### Build output
 

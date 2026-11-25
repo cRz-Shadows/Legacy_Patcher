@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import shutil
 import stat
+import zipfile
 from pathlib import Path
 
 from .config import (
@@ -15,14 +17,18 @@ from .config import (
     PATCH_ARCHIVE_MARKER,
     PATCH_ARCHIVE_NAMES,
     PATCHES_ROOT_DIR,
+    PATCHSET_ZIP_EXT,
     SEVENZIP_DICTIONARY_MB,
     SEVENZIP_LEVEL,
     SEVENZIP_WORD_SIZE,
 )
 from .dependencies import require_py7zr
-from .files import sha256_file
+from .files import iter_files, sha256_file
 from .patches import read_base_manifest
-from .runtime import safe_rmtree
+from .runtime import create_hidden_workdir, safe_rmtree
+
+# The patcher runs discovery more than once, so each zip is extracted once.
+_EXTRACTED_PATCH_ZIPS: dict[Path, Path] = {}
 
 
 def py7zr_compression_filters() -> list[dict]:
@@ -82,7 +88,8 @@ def compress_patch_subtree(patchset_root: Path, name: str) -> Path:
 
 def publish_patchset(staged: Path, destination: Path) -> None:
     """
-    Replace an old generated patch set only after the new one is complete.
+    Replace an old generated patch set and its zip only after each new one
+    is complete.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
     backup = destination.with_name(
@@ -106,6 +113,17 @@ def publish_patchset(staged: Path, destination: Path) -> None:
     else:
         if backup.exists():
             shutil.rmtree(backup)
+    archive = destination.with_name(destination.name + PATCHSET_ZIP_EXT)
+    partial_archive = destination.with_name(
+        f".{archive.name}.partial.{os.getpid()}"
+    )
+    try:
+        with zipfile.ZipFile(partial_archive, "w") as zip_file:
+            for relative_path, path in iter_files(destination):
+                zip_file.write(path, f"{destination.name}/{relative_path}")
+        os.replace(partial_archive, archive)
+    finally:
+        partial_archive.unlink(missing_ok=True)
 
 
 def _patchset_entry(patchset_dir: Path):
@@ -162,10 +180,39 @@ def find_patchsets(patches_root: Path):
             entry = _patchset_entry(child)
             if entry is not None:
                 patchsets.append(entry)
+    if not patchsets:
+        for archive in patches_root.iterdir():
+            if archive.suffix.casefold() == PATCHSET_ZIP_EXT:
+                patchsets.extend(_find_zip_patchsets(archive))
     patchsets.sort(
         key=lambda t: (t[0].parent.name.casefold(), t[0].name.casefold())
     )
     return patchsets
+
+
+def _find_zip_patchsets(archive: Path):
+    key = archive.resolve()
+    if key not in _EXTRACTED_PATCH_ZIPS:
+        try:
+            zip_file = zipfile.ZipFile(archive)
+        except (OSError, zipfile.BadZipFile):
+            return []
+        with zip_file:
+            if not any(
+                Path(name).name == BASE_MANIFEST_NAME
+                for name in zip_file.namelist()
+            ):
+                return []
+            extracted_root = create_hidden_workdir() / archive.stem
+            atexit.register(safe_rmtree, extracted_root.parent)
+            # extractall drops absolute and ".." parts of member names.
+            zip_file.extractall(extracted_root)
+        _EXTRACTED_PATCH_ZIPS[key] = extracted_root
+    entries = (
+        _patchset_entry(manifest.parent)
+        for manifest in _EXTRACTED_PATCH_ZIPS[key].rglob(BASE_MANIFEST_NAME)
+    )
+    return [entry for entry in entries if entry is not None]
 
 
 def find_patchsets_from_selection(selected_folder: Path):
